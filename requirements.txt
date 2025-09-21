@@ -1,7 +1,12 @@
-streamlit==1.38
+streamlit==1.38.0
 pandas==2.2.2
 plotly==5.23.0
 python-dotenv==1.0.1
+
+# OpenAI + httpx pin to avoid 'proxies' error
+openai==1.51.0
+httpx==0.27.2
+
+# GA4 SDK
 google-analytics-data==0.18.6
 google-auth==2.34.0
-openai==1.50.0
