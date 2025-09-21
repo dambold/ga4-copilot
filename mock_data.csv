@@ -1,0 +1,6 @@
+date,sessionDefaultChannelGroup,landingPagePlusQueryString,totalUsers,sessions,sessionConversionRate,conversions
+2024-09-01,Organic Search,/home,1200,1400,0.015,21
+2024-09-01,Direct,/pricing,800,900,0.020,18
+2024-09-02,Organic Search,/home,1100,1300,0.014,18
+2024-09-02,Direct,/pricing,820,910,0.019,17
+2024-09-02,Referral,/blog,300,350,0.010,4
