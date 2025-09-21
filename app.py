@@ -33,14 +33,53 @@ go = st.button("Run")
 
 def openai_parse_query(q: str) -> dict:
     """Use OpenAI to turn a plain-English question into a GA4 query spec."""
-    # If there’s no key, return a simple default query (still works in mock mode)
-    if not OPENAI_API_KEY:
-        s = (date.today() - timedelta(days=28)).isoformat()
-        e = date.today().isoformat()
+    # Prefer Streamlit secrets on cloud; fall back to env locally
+    key = (st.secrets.get("OPENAI_API_KEY", None) 
+           if hasattr(st, "secrets") else None) or os.getenv("OPENAI_API_KEY", "")
+    key = (key or "").strip()
+
+    # Date helpers for examples (includes d1)
+    today = date.today()
+    d0  = today.isoformat()
+    d1  = (today - timedelta(days=1)).isoformat()
+    d7  = (today - timedelta(days=7)).isoformat()
+    d30 = (today - timedelta(days=30)).isoformat()
+
+    # If no key, return a safe default query (works in MOCK_MODE)
+    if not key:
+        s = (today - timedelta(days=28)).isoformat()
         return {
-            "dimensions": ["sessionDefaultChannelGroup"],
+            "dimensions": ["landingPagePlusQueryString"],
             "metrics": ["totalUsers"],
-            "date_range": {"start_date": s, "end_date": e},
+            "date_range": {"start_date": d7, "end_date": d0},
+            "filters": ""
+        }
+
+    prompt = TRANSLATE_PROMPT.format(question=q, d0=d0, d1=d1, d7=d7, d30=d30)
+    msgs = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user",   "content": prompt}
+    ]
+
+    try:
+        client = OpenAI(api_key=key)
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=msgs,
+            temperature=0.1,
+        )
+        text = (resp.choices[0].message.content or "").strip()
+        if text.startswith("```"):
+            text = text.strip("`").replace("json", "").strip()
+        data = json.loads(text)
+        return data
+    except Exception as e:
+        # Friendly fallback so the app keeps working
+        st.info("Using fallback query (LLM unavailable).")
+        return {
+            "dimensions": ["landingPagePlusQueryString"],
+            "metrics": ["totalUsers"],
+            "date_range": {"start_date": d7, "end_date": d0},
             "filters": ""
         }
 
