@@ -1,3 +1,4 @@
+import traceback
 import os, json
 import pandas as pd
 import plotly.express as px
@@ -17,9 +18,11 @@ st.set_page_config(page_title="GA4 Insights Copilot", page_icon="📈", layout="
 st.title("GA4 Insights Copilot")
 st.caption("Ask natural-language questions about your GA4 data and see instant tables and charts.")
 
+# ---------------- Sidebar ----------------
 with st.sidebar:
     st.subheader("Settings")
     mock = st.toggle("Mock Mode (CSV)", value=MOCK_MODE)
+
     today = date.today()
     presets = {
         "Last 7 days":  (today - timedelta(days=7),  today),
@@ -28,26 +31,45 @@ with st.sidebar:
     }
     choice = st.selectbox("Date preset", list(presets.keys()), index=1)
 
+    st.divider()
+    if st.button("Test LLM connectivity"):
+        try:
+            key = (st.secrets.get("OPENAI_API_KEY", None) if hasattr(st, "secrets") else None) or os.getenv("OPENAI_API_KEY", "")
+            key = (key or "").strip()
+            if not key:
+                st.error("No OPENAI_API_KEY found in Streamlit secrets or environment.")
+            else:
+                client = OpenAI(api_key=key)
+                pong = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": "Say 'pong'"}],
+                    temperature=0.0,
+                )
+                st.success(f"LLM OK: {pong.choices[0].message.content!r}")
+        except Exception as e:
+            st.error(f"LLM error: {e}")
+            st.caption("See deployment logs for stack trace.")
+            traceback.print_exc()
+
+# ---------------- Main controls ----------------
 question = st.text_input("Ask a question", placeholder="e.g. Top landing pages by users last 7 days")
 go = st.button("Run")
 
 def openai_parse_query(q: str) -> dict:
     """Use OpenAI to turn a plain-English question into a GA4 query spec."""
     # Prefer Streamlit secrets on cloud; fall back to env locally
-    key = (st.secrets.get("OPENAI_API_KEY", None) 
-           if hasattr(st, "secrets") else None) or os.getenv("OPENAI_API_KEY", "")
+    key = (st.secrets.get("OPENAI_API_KEY", None) if hasattr(st, "secrets") else None) or os.getenv("OPENAI_API_KEY", "")
     key = (key or "").strip()
 
-    # Date helpers for examples (includes d1)
+    # Date helpers (includes d1)
     today = date.today()
     d0  = today.isoformat()
     d1  = (today - timedelta(days=1)).isoformat()
     d7  = (today - timedelta(days=7)).isoformat()
     d30 = (today - timedelta(days=30)).isoformat()
 
-    # If no key, return a safe default query (works in MOCK_MODE)
+    # No key? Return a safe default (works in mock mode)
     if not key:
-        s = (today - timedelta(days=28)).isoformat()
         return {
             "dimensions": ["landingPagePlusQueryString"],
             "metrics": ["totalUsers"],
@@ -71,56 +93,13 @@ def openai_parse_query(q: str) -> dict:
         text = (resp.choices[0].message.content or "").strip()
         if text.startswith("```"):
             text = text.strip("`").replace("json", "").strip()
-        data = json.loads(text)
-        return data
-    except Exception as e:
-        # Friendly fallback so the app keeps working
-        st.info("Using fallback query (LLM unavailable).")
+        return json.loads(text)
+    except Exception:
+        st.info("Using fallback query (OpenAI unavailable). Check Secrets.")
         return {
             "dimensions": ["landingPagePlusQueryString"],
             "metrics": ["totalUsers"],
             "date_range": {"start_date": d7, "end_date": d0},
-            "filters": ""
-        }
-
-    client = OpenAI(api_key=OPENAI_API_KEY)
-
-    # Date helpers for the prompt (now includes d1)
-    today = date.today()
-    d0  = today.isoformat()
-    d1  = (today - timedelta(days=1)).isoformat()
-    d7  = (today - timedelta(days=7)).isoformat()
-    d30 = (today - timedelta(days=30)).isoformat()
-
-    prompt = TRANSLATE_PROMPT.format(
-        question=q,
-        d0=d0, d1=d1, d7=d7, d30=d30
-    )
-
-    msgs = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user",   "content": prompt}
-    ]
-
-    try:
-        resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=msgs,
-            temperature=0.1,
-        )
-        text = resp.choices[0].message.content.strip()
-        # Strip code fences if present
-        if text.startswith("```"):
-            text = text.strip("`").replace("json", "").strip()
-        data = json.loads(text)
-        return data
-    except Exception:
-        # Safe fallback: channels by users, last 28 days
-        s = (today - timedelta(days=28)).isoformat()
-        return {
-            "dimensions": ["sessionDefaultChannelGroup"],
-            "metrics": ["totalUsers"],
-            "date_range": {"start_date": s, "end_date": d0},
             "filters": ""
         }
 
@@ -131,7 +110,6 @@ def render(df: pd.DataFrame, dims, mets):
     st.subheader("Results")
     st.dataframe(df, use_container_width=True, hide_index=True)
 
-    # Simple default chart
     if len(dims) >= 1 and len(mets) >= 1:
         x, y = dims[0], mets[0]
         if x in df.columns and y in df.columns:
@@ -142,7 +120,7 @@ if go and question.strip():
     with st.spinner("Thinking..."):
         query = openai_parse_query(question)
 
-        # If the LLM didn’t provide dates, apply the chosen preset
+        # Apply chosen preset if the LLM didn’t specify dates
         if not query.get("date_range") or not query["date_range"].get("start_date"):
             s, e = presets[choice]
             query["date_range"] = {"start_date": s.isoformat(), "end_date": e.isoformat()}
